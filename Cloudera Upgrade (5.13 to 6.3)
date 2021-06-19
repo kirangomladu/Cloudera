@@ -1,0 +1,318 @@
+******************************************************
+	   Cloudera Upgrade (5.13 to 6.3)
+******************************************************
+
+
+* Get the instances ready
+
+* SSH to CM instance
+
+* Set Cm repo
+
+curl https://archive.cloudera.com/cm5/ubuntu/trusty/amd64/cm/cloudera.list > cloudera-manager.list
+
+nano cloudera-manager.list
+(change >>  deb https://archive.cloudera.com/cm5/ubuntu/lucid/amd64/cm trusty-cm5 contrib to deb https://archive.cloudera.com/cm5/ubuntu/lucid/amd64/cm trusty-cm5.13 contrib)
+
+sudo mv cloudera-manager.list /etc/apt/sources.list.d/
+
+sudo apt-key adv --recv-key --keyserver keyserver.ubuntu.com 327574EE02A818DD
+
+sudo apt-get update
+
+* Install Oracle java
+
+sudo apt-get install oracle-j2sdk1.7 -y
+
+* Install CM server
+
+sudo apt-get install cloudera-manager-daemons cloudera-manager-server
+
+* Start the embedded db
+
+sudo apt-get install cloudera-manager-server-db-2 -y
+
+* Start db
+
+sudo service cloudera-scm-server-db start
+
+* Start CM server
+
+sudo service cloudera-scm-server start
+
+### After installation generate some data on cluster
+
+$ hdfs dfs -mkdir /data
+
+$  yarn jar /opt/cloudera/parcels/CDH/lib/hadoop-mapreduce/hadoop-mapreduce-examples.jar randomwriter  /data/output/
+
+
+
+===================================================
+		Upgrade starts here
+===================================================
+
+
+----*** Collect Information***----
+
+Log in to the Cloudera Manager Server host. 
+
+* The current version of the Operating System:
+ lsb_release -a
+
+* Database parameters:
+
+cat /etc/cloudera-scm-server/db.properties
+...
+com.cloudera.cmf.db.type=postgresql
+com.cloudera.cmf.db.host=localhost:7432
+com.cloudera.cmf.db.name=scm
+com.cloudera.cmf.db.user=scm
+com.cloudera.cmf.db.password=HEnXzRqh7B
+com.cloudera.cmf.db.setupType=EMBEDDED
+
+* Log in to the Cloudera Manager Admin console and find the following:
+
+* The version of Cloudera Manager used in your cluster. 
+
+Go to Support > About.
+
+* The version of the JDK deployed in the cluster. 
+
+Go to Support > About.
+
+
+----*** Backing up Cloudera Manager ***----
+
+
+### Backup Cloudera Manager Agent (On all hosts running CM agent)
+
+* Create a top level backup directory.
+
+export CM_BACKUP_DIR="`date +%F`-CM5.13"
+echo $CM_BACKUP_DIR
+mkdir -p $CM_BACKUP_DIR
+
+* Back up the Agent directory and the runtime state.
+
+sudo -E tar -cf $CM_BACKUP_DIR/cloudera-scm-agent.tar --exclude=*.sock /etc/cloudera-scm-agent /etc/default/cloudera-scm-agent /var/run/cloudera-scm-agent /var/lib/cloudera-scm-agent
+
+* Back up the existing repository directory.
+
+sudo -E tar -cf $CM_BACKUP_DIR/repository.tar /etc/apt/sources.list.d
+
+
+## Backup Cloudera Management Service 
+
+* On the host where the Service Monitor role is configured to run, backup the following directory:
+
+sudo cp -rp /var/lib/cloudera-service-monitor /var/lib/cloudera-service-monitor-`date +%F`-CM5.13
+
+* On the host where the Host Monitor role is configured to run, backup the following directory:
+
+sudo cp -rp /var/lib/cloudera-host-monitor /var/lib/cloudera-host-monitor-`date +%F`-CM5.13
+ 
+* On the host where the Event Server role is configured to run, back up the following directory:
+
+sudo cp -rp /var/lib/cloudera-scm-eventserver /var/lib/cloudera-scm-eventserver-`date +%F`-CM5.13
+
+
+## Stop Cloudera Manager Server & Cloudera Management Service
+
+* Stop CMS from CM UI
+
+* Stop services using Embedded postgre db - Hive, Hue, Oozie, Sentry
+
+* Stop Cloudera manager server
+
+sudo systemctl stop cloudera-scm-server
+
+
+## Back Up the Cloudera Manager Databases
+
+pg_dump -h localhost -U scm -W -p 7432 scm > $HOME/scm-backup-`date +%F`-CM5.13.sql
+
+
+## Backup Cloudera Manager Server
+
+sudo -E tar -cf $CM_BACKUP_DIR/cloudera-scm-server.tar /etc/cloudera-scm-server /etc/default/cloudera-scm-server
+
+sudo -E tar -cf $CM_BACKUP_DIR/repository.tar /etc/apt/sources.list.d
+
+
+----*** Establish Access to the Cloudera Repository ***----
+
+
+$ sudo rm /etc/apt/sources.list.d/cloudera*.list*
+
+$ sudo nano /etc/apt/sources.list.d/cloudera_manager.list
+
+# Packages for Cloudera Manager
+deb https://archive.cloudera.com/cm6/6.3.0/ubuntu1604/apt/ xenial-cm6.3.0 contrib
+deb-src https://archive.cloudera.com/cm6/6.3.0/ubuntu1604/apt/ xenial-cm6.3.0 contrib
+
+$ sudo apt-key adv --recv-key --keyserver keyserver.ubuntu.com 73985D43B0B19C9F
+
+$ sudo apt-get update
+
+
+----*** Install Oracle JDK 8 ***----
+
+
+$ sudo apt-get install oracle-j2sdk1.8
+
+$ sudo nano /etc/default/cloudera-scm-server
+export JAVA_HOME="/usr/lib/jvm/java-8-oracle-cloudera"
+
+
+----*** Upgrade Cloudera Manager Server ***----
+
+
+* Stop the Cloudera Manager Server.
+
+sudo systemctl stop cloudera-scm-server
+
+* Stop the Cloudera Manager Embedded PostgreSQL database
+
+sudo systemctl stop cloudera-scm-server-db
+
+* Stop the Cloudera Manager Agent
+
+sudo systemctl stop cloudera-scm-agent
+
+* Upgrade the packages
+
+sudo apt-get clean
+
+sudo apt-get update
+
+sudo apt-get dist-upgrade
+(Select Default values)
+
+sudo apt-get install cloudera-manager-server cloudera-manager-daemons cloudera-manager-agent cloudera-manager-server-db-2
+
+* Verify packages
+
+dpkg-query -l 'cloudera-manager-*'
+
+* Start Embedded Db
+
+sudo systemctl start cloudera-scm-server-db
+
+* Start the Cloudera Manager Agent.
+
+sudo systemctl start cloudera-scm-agent
+
+* Start the Cloudera Manager Server
+
+sudo systemctl start cloudera-scm-server
+
+* Upgrade the Agents
+
+In browser
+cm-ip:7180/cmf/upgrade
+
+
+
+===================================================
+		CDH Upgrade
+===================================================
+
+
+----*** Collect Information ***----
+
+>> Log in to the Cloudera Manager Admin console and find the following:
+
+* The version of Cloudera Manager used in your cluster. Go to Support > About.
+
+* The version of the JDK deployed in the cluster. Go to Support > About.
+
+* Whether High Availability is enabled for HDFS. Go to the HDFS service and click the Actions button. If you see Disable High Availability, the cluster has High Availability enabled.
+
+* The Install Method and Current CDH version. The CDH version number and Install Method are displayed on the Cloudera Manager Home page, to the right of the cluster name.
+
+
+>> Go through following documents
+
+https://docs.cloudera.com/documentation/enterprise/6/release-notes/topics/rg_cdh_6_release_notes.html#cdh6_release_notes
+
+https://docs.cloudera.com/documentation/other/security-bulletins/topics/Security-Bulletin.html
+
+* Review the upgrade procedure and reserve a maintenance window with enough time allotted to perform all steps. For production clusters, Cloudera recommends allocating up to a full day maintenance window to perform the upgrade, depending on the number of hosts, the amount of experience you have with Hadoop and Linux, and the particular hardware you are using.
+
+* Run the Security Inspector and fix any reported errors. (If security is enabled)
+
+* Perform Health check
+
+hdfs fsck / -includeSnapshots
+
+* Generate report
+
+hdfs dfsadmin -report
+
+*The following services are no longer supported as of Enterprise 6.0.0:
+Accumulo
+Sqoop 2
+MapReduce 1
+Spark 1.6
+Record Service
+
+----*** Installing Dependencies for Hue ***----
+
+* Install the python-pip package:
+
+sudo apt-get install python-pip
+
+* Install psycopg2 2.7.5 using pip
+
+sudo pip install psycopg2==2.7.5 --ignore-installed
+
+
+----*** Cluster Backup ***----
+
+* Perform BDR steps
+
+----*** Pre-upgrade steps ***----
+
+* Enter Maintenance Mode
+
+* YARN
+
+Decommission and recommission the YARN NodeManagers but do not start the NodeManagers.
+A decommission is required so that the NodeManagers stop accepting new containers, kill any running containers, and then shutdown.
+
+
+----*** Download and Distribute Parcels ***----
+
+* Log in to the Cloudera Manager Admin Console.
+
+* Click Hosts > Parcels. The Parcels page displays.
+
+Update the Parcel Repository for CDH using the following remote parcel repository URL:
+https://archive.cloudera.com/cdh6/6.3.0/parcels/
+
+* After all the parcels are distributed, click on the Upgrade button next to the chosen CDH. The chosen CDH should be selected automatically.
+
+
+----*** Finalize the HDFS Upgrade ***----
+
+To determine if you can finalize the upgrade, run important workloads and ensure that they are successful. After you have finalized the upgrade, you cannot roll back to a previous version of HDFS without using backups. Verifying that you are ready to finalize the upgrade can take a long time.
+
+* Make sure you have enough free disk space, keeping in mind that the following behavior continues until the upgrade is finalized:
+	- Deleting files does not free up disk space.
+	- Using the balancer causes all moved replicas to be duplicated.
+	- All on-disk data representing the NameNodes metadata is retained, which could more than double the amount of space required on the NameNode and JournalNode      		disks.
+
+Go to the HDFS service.
+Click the Instances tab.
+Click the link for the NameNode instance.
+The NameNode instance page displays.
+
+Select Actions > Finalize Metadata Upgrade and click Finalize Metadata Upgrade to confirm.
+
+----*** Exit Maintenance Mode ***----
+
+
+----*** Perform Health Check ***----
+
+hdsf fsck / -includeSnapshots
